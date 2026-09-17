@@ -203,6 +203,15 @@ describe('createReplyDraft', () => {
     await createReplyDraft('1', 'body', true);
     expect(mPost).toHaveBeenCalledWith('/messages/1/createreplyall', { Comment: 'body' });
   });
+  it('creates a draft in a shared mailbox', async () => {
+    mPost.mockResolvedValue({ Id: 'r3' });
+    await createReplyDraft('1', 'body', false, 'shared@example.com');
+    expect(mPost).toHaveBeenCalledWith(
+      '/messages/1/createreply',
+      { Comment: 'body' },
+      'shared@example.com',
+    );
+  });
 });
 
 describe('createForwardDraft', () => {
@@ -317,6 +326,11 @@ describe('searchMessages', () => {
     mGet.mockResolvedValue({ value: [] });
     await searchMessages({ endDate: '2024-03-03' });
     expect((mGet.mock.calls[0][1] as Record<string, string>)['$search']).toBe('"received<=2024-03-03"');
+  });
+  it('searches a shared mailbox', async () => {
+    mGet.mockResolvedValue({ value: [] });
+    await searchMessages({ query: 'invoice', mailbox: 'shared@example.com' });
+    expect(mGet.mock.calls[0][2]).toBe('shared@example.com');
   });
 });
 

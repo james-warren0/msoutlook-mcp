@@ -64,15 +64,15 @@ describe('outlook_get_email', () => {
     vi.mocked(mail.getMessage).mockResolvedValue({ ...richMsg, IsRead: false } as any);
     vi.mocked(mail.markMessageRead).mockResolvedValue(undefined as any);
     const r = await tools.get('outlook_get_email')!.handler({ id: 'm1', include_attachments: true, mark_read: true });
-    expect(mail.getMessage).toHaveBeenCalledWith('m1', true);
-    expect(mail.markMessageRead).toHaveBeenCalledWith('m1');
+    expect(mail.getMessage).toHaveBeenCalledWith('m1', true, undefined);
+    expect(mail.markMessageRead).toHaveBeenCalledWith('m1', true, undefined);
     expect(text(r)).toContain('Attachments:');
     expect(text(r)).toContain('a.pdf');
   });
   it('no mark when already read, no attachments', async () => {
     vi.mocked(mail.getMessage).mockResolvedValue({ ...richMsg, Attachments: [] } as any);
     const r = await tools.get('outlook_get_email')!.handler({ id: 'm1', mark_read: true });
-    expect(mail.getMessage).toHaveBeenCalledWith('m1', false);
+    expect(mail.getMessage).toHaveBeenCalledWith('m1', false, undefined);
     expect(mail.markMessageRead).not.toHaveBeenCalled();
     expect(text(r)).not.toContain('- a.pdf');
   });
@@ -86,7 +86,7 @@ describe('outlook_get_unread', () => {
   it('singular default top', async () => {
     vi.mocked(mail.getUnreadMessages).mockResolvedValue([richMsg] as any);
     const r = await tools.get('outlook_get_unread')!.handler({});
-    expect(mail.getUnreadMessages).toHaveBeenCalledWith(10);
+    expect(mail.getUnreadMessages).toHaveBeenCalledWith(10, undefined);
     expect(text(r)).toContain('1 unread email:');
   });
 });
@@ -125,25 +125,32 @@ describe('simple action tools', () => {
   it('send_draft', async () => {
     vi.mocked(mail.sendDraft).mockResolvedValue(undefined as any);
     expect(text(await tools.get('outlook_send_draft')!.handler({ id: 'd' }))).toContain('Draft sent');
-    expect(mail.sendDraft).toHaveBeenCalledWith('d');
+    expect(mail.sendDraft).toHaveBeenCalledWith('d', undefined);
   });
   it('reply default and reply_all', async () => {
     vi.mocked(mail.replyToMessage).mockResolvedValue(undefined as any);
     await tools.get('outlook_reply')!.handler({ id: 'm', body: 'b' });
-    expect(mail.replyToMessage).toHaveBeenCalledWith('m', 'b', false);
+    expect(mail.replyToMessage).toHaveBeenCalledWith('m', 'b', false, undefined);
     await tools.get('outlook_reply')!.handler({ id: 'm', body: 'b', reply_all: true });
-    expect(mail.replyToMessage).toHaveBeenCalledWith('m', 'b', true);
+    expect(mail.replyToMessage).toHaveBeenCalledWith('m', 'b', true, undefined);
   });
   it('create_reply_draft', async () => {
     vi.mocked(mail.createReplyDraft).mockResolvedValue({ Id: 'r', Subject: 's' } as any);
     expect(text(await tools.get('outlook_create_reply_draft')!.handler({ id: 'm', body: 'b', reply_all: true }))).toContain('Reply draft created');
   });
+  it('passes the shared mailbox to reply drafts', async () => {
+    vi.mocked(mail.createReplyDraft).mockResolvedValue({ Id: 'r', Subject: 's' } as any);
+    await tools.get('outlook_create_reply_draft')!.handler({
+      mailbox: 'shared@example.com', id: 'm', body: 'b', reply_all: false,
+    });
+    expect(mail.createReplyDraft).toHaveBeenCalledWith('m', 'b', false, 'shared@example.com');
+  });
   it('create_forward_draft with and without comment', async () => {
     vi.mocked(mail.createForwardDraft).mockResolvedValue({ Id: 'f', Subject: 's' } as any);
     await tools.get('outlook_create_forward_draft')!.handler({ id: 'm', to: ['a@x.com'], comment: 'hi' });
-    expect(mail.createForwardDraft).toHaveBeenCalledWith('m', 'hi', ['a@x.com']);
+    expect(mail.createForwardDraft).toHaveBeenCalledWith('m', 'hi', ['a@x.com'], undefined);
     await tools.get('outlook_create_forward_draft')!.handler({ id: 'm' });
-    expect(mail.createForwardDraft).toHaveBeenCalledWith('m', '', undefined);
+    expect(mail.createForwardDraft).toHaveBeenCalledWith('m', '', undefined, undefined);
   });
   it('forward', async () => {
     vi.mocked(mail.forwardMessage).mockResolvedValue(undefined as any);
@@ -176,12 +183,12 @@ describe('outlook_batch', () => {
     vi.mocked(mail.markMessageRead).mockResolvedValue(undefined as any);
     const s = JSON.parse(text(await tools.get('outlook_batch')!.handler({ action: 'mark_read', ids: ['a', 'b'] })));
     expect(s.succeeded).toBe(2);
-    expect(mail.markMessageRead).toHaveBeenCalledWith('a', true);
+    expect(mail.markMessageRead).toHaveBeenCalledWith('a', true, undefined);
   });
   it('mark_unread', async () => {
     vi.mocked(mail.markMessageRead).mockResolvedValue(undefined as any);
     await tools.get('outlook_batch')!.handler({ action: 'mark_unread', ids: ['a'] });
-    expect(mail.markMessageRead).toHaveBeenCalledWith('a', false);
+    expect(mail.markMessageRead).toHaveBeenCalledWith('a', false, undefined);
   });
   it('delete with Error failure', async () => {
     vi.mocked(mail.deleteMessage).mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(undefined as any);
@@ -197,13 +204,13 @@ describe('outlook_batch', () => {
   it('unflag', async () => {
     vi.mocked(mail.flagMessage).mockResolvedValue(undefined as any);
     await tools.get('outlook_batch')!.handler({ action: 'unflag', ids: ['a'] });
-    expect(mail.flagMessage).toHaveBeenCalledWith('a', 'NotFlagged');
+    expect(mail.flagMessage).toHaveBeenCalledWith('a', 'NotFlagged', undefined);
   });
   it('move with destination', async () => {
     vi.mocked(mail.moveMessage).mockResolvedValue({ Id: 'n' } as any);
     const s = JSON.parse(text(await tools.get('outlook_batch')!.handler({ action: 'move', ids: ['a'], destination_folder: 'Archive' })));
     expect(s.succeeded).toBe(1);
-    expect(mail.moveMessage).toHaveBeenCalledWith('a', 'Archive');
+    expect(mail.moveMessage).toHaveBeenCalledWith('a', 'Archive', undefined);
   });
 });
 
@@ -219,6 +226,11 @@ describe('outlook_search_emails', () => {
     const r = await tools.get('outlook_search_emails')!.handler({ query: 'q', top: 5, start_date: 's', end_date: 'e', folder: 'Inbox', skip_token: 'k' });
     expect(text(r)).toBe('No messages found.');
   });
+  it('passes a shared mailbox to the API', async () => {
+    vi.mocked(mail.searchMessages).mockResolvedValue({ messages: [], nextSkipToken: undefined } as any);
+    await tools.get('outlook_search_emails')!.handler({ query: 'q', mailbox: 'shared@example.com' });
+    expect(mail.searchMessages).toHaveBeenCalledWith(expect.objectContaining({ mailbox: 'shared@example.com' }));
+  });
 });
 
 describe('folders', () => {
@@ -233,7 +245,7 @@ describe('folders', () => {
   it('create folder', async () => {
     vi.mocked(mail.createFolder).mockResolvedValue({ Id: 'f', DisplayName: 'New' } as any);
     await tools.get('outlook_create_folder')!.handler({ name: 'New', parent_folder_id: 'p' });
-    expect(mail.createFolder).toHaveBeenCalledWith('New', 'p');
+    expect(mail.createFolder).toHaveBeenCalledWith('New', 'p', undefined);
   });
   it('rename folder', async () => {
     vi.mocked(mail.renameFolder).mockResolvedValue({ DisplayName: 'X' } as any);
@@ -284,7 +296,7 @@ describe('drafts/attachments/misc', () => {
   it('get_conversation', async () => {
     vi.mocked(mail.getConversation).mockResolvedValue([richMsg] as any);
     await tools.get('outlook_get_conversation')!.handler({ conversation_id: 'c' });
-    expect(mail.getConversation).toHaveBeenCalledWith('c', 50);
+    expect(mail.getConversation).toHaveBeenCalledWith('c', 50, undefined);
   });
   it('set_categories set and clear', async () => {
     vi.mocked(mail.setCategories).mockResolvedValue(undefined as any);

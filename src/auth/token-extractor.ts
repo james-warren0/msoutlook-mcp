@@ -75,6 +75,20 @@ function isJwt(value: string): boolean {
   return typeof value === 'string' && value.startsWith('ey');
 }
 
+/**
+ * Return true only for tokens scoped to the primary Outlook API resource.
+ * OWA also caches a separate `outlook.office.com/search` token; treating that
+ * as a mail token causes otherwise successful logins to fail with HTTP 401.
+ */
+function isOwaApiTarget(target?: string): boolean {
+  if (!target) return false;
+  return target.split(/\s+/).some(scope =>
+    scope === 'service::outlook.office.com::mbi_ssl'
+      || (scope.startsWith('https://outlook.office.com/')
+        && !scope.startsWith('https://outlook.office.com/search/')),
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Extraction from Playwright storageState localStorage entries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +133,7 @@ export async function extractTokensFromLocalStorage(
     // ── Access Tokens ─────────────────────────────────────────────────────
     if (!key.includes('accesstoken')) continue;
 
-    const isOwaToken = entry.target?.includes('outlook.office.com') ?? false;
+    const isOwaToken = isOwaApiTarget(entry.target);
     let expiry = isJwt(entry.secret) ? getJwtExpiry(entry.secret) : null;
     if (!expiry && isOwaToken) {
       const expiresOn = Number(entry.expiresOn);

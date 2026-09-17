@@ -104,6 +104,28 @@ describe('extractTokensFromLocalStorage', () => {
     expect(result!.owaToken).toBe(newer);
   });
 
+  it('does not mistake the Outlook Search token for the mail API token', async () => {
+    const mail = makeJwt({ exp: futureSec(), aud: 'https://outlook.office.com' });
+    const search = makeJwt({ exp: farFutureSec(), aud: 'search' });
+    const ls = [
+      {
+        name: 'msal.3|a|x|accesstoken|c|t|mail',
+        value: entry({ secret: mail, target: 'https://outlook.office.com/Mail.ReadWrite https://outlook.office.com/.default' }),
+      },
+      {
+        name: 'msal.3|a|x|accesstoken|c|t|search',
+        value: entry({ secret: search, target: 'https://outlook.office.com/search/SubstrateSearch-Internal.ReadWrite https://outlook.office.com/search/.default' }),
+      },
+      {
+        name: 'msal.3|a|x|refreshtoken|c|||',
+        value: entry({ secret: 'R', clientId: OWA_CLIENT_ID }),
+      },
+    ];
+
+    const result = await extractTokensFromLocalStorage(ls);
+    expect(result!.owaToken).toBe(mail);
+  });
+
   it('falls back to preferred_username for upn', async () => {
     const owaJwt = makeJwt({ exp: futureSec(), preferred_username: 'pref@x.com' });
     const ls = [

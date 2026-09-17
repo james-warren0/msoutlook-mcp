@@ -6,6 +6,23 @@ import { readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { owaGet, owaPost, owaPatch, owaDelete } from './client.js';
 
+function getFromMailbox<T>(path: string, params?: Record<string, string>, mailbox?: string): Promise<T> {
+  if (mailbox) return owaGet<T>(path, params, mailbox);
+  return owaGet<T>(path, params);
+}
+
+function postToMailbox<T>(path: string, body: unknown, mailbox?: string): Promise<T> {
+  return mailbox ? owaPost<T>(path, body, mailbox) : owaPost<T>(path, body);
+}
+
+function patchInMailbox<T>(path: string, body: unknown, mailbox?: string): Promise<T> {
+  return mailbox ? owaPatch<T>(path, body, mailbox) : owaPatch<T>(path, body);
+}
+
+function deleteFromMailbox(path: string, mailbox?: string): Promise<void> {
+  return mailbox ? owaDelete(path, mailbox) : owaDelete(path);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Body formatting
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,6 +116,8 @@ export interface ODataResponse<T> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ListMessagesOptions {
+  /** Shared/delegated mailbox UPN. Defaults to the signed-in user's mailbox. */
+  mailbox?: string;
   folder?: string;
   top?: number;
   skip?: number;
@@ -130,7 +149,7 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<Mess
     if (opts.filter) params['$filter'] = opts.filter;
   }
 
-  const res = await owaGet<ODataResponse<Message>>(`/MailFolders/${folder}/messages`, params);
+  const res = await getFromMailbox<ODataResponse<Message>>(`/MailFolders/${folder}/messages`, params, opts.mailbox);
   return res.value;
 }
 
@@ -138,9 +157,9 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<Mess
 // Get message
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getMessage(id: string, includeAttachments = false): Promise<Message> {
+export async function getMessage(id: string, includeAttachments = false, mailbox?: string): Promise<Message> {
   const params = includeAttachments ? { '$expand': 'Attachments' } : undefined;
-  return owaGet<Message>(`/messages/${id}`, params);
+  return getFromMailbox<Message>(`/messages/${id}`, params, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,6 +202,8 @@ export async function fileToAttachment(path: string): Promise<OutgoingAttachment
 }
 
 export interface SendEmailOptions {
+  /** Shared/delegated mailbox UPN. Defaults to the signed-in user's mailbox. */
+  mailbox?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -204,7 +225,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
   const bodyType = opts.bodyType ?? 'HTML';
   const content = bodyType === 'HTML' ? toHtmlBody(opts.body) : opts.body;
 
-  await owaPost('/sendmail', {
+  await postToMailbox('/sendmail', {
     Message: {
       Subject: opts.subject,
       Body: { ContentType: bodyType, Content: content },
@@ -215,7 +236,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
       ...(opts.attachments?.length ? { Attachments: opts.attachments.map(toOwaAttachment) } : {}),
     },
     SaveToSentItems: opts.saveToSentItems !== false,
-  });
+  }, opts.mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +251,7 @@ export async function createDraft(opts: Omit<SendEmailOptions, 'saveToSentItems'
   const bodyType = opts.bodyType ?? 'HTML';
   const content = bodyType === 'HTML' ? toHtmlBody(opts.body) : opts.body;
 
-  return owaPost<Message>('/messages', {
+  return postToMailbox<Message>('/messages', {
     Subject: opts.subject,
     Body: { ContentType: bodyType, Content: content },
     ToRecipients: toRecipients,
@@ -238,18 +259,18 @@ export async function createDraft(opts: Omit<SendEmailOptions, 'saveToSentItems'
     ...(bccRecipients?.length ? { BccRecipients: bccRecipients } : {}),
     Importance: opts.importance ?? 'Normal',
     ...(opts.attachments?.length ? { Attachments: opts.attachments.map(toOwaAttachment) } : {}),
-  });
+  }, opts.mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reply
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function replyToMessage(id: string, body: string, replyAll = false): Promise<void> {
+export async function replyToMessage(id: string, body: string, replyAll = false, mailbox?: string): Promise<void> {
   const action = replyAll ? 'replyall' : 'reply';
-  await owaPost(`/messages/${id}/${action}`, {
+  await postToMailbox(`/messages/${id}/${action}`, {
     Comment: toHtmlBody(body),
-  });
+  }, mailbox);
 }
 
 /**
@@ -260,11 +281,11 @@ export async function replyToMessage(id: string, body: string, replyAll = false)
  * The caller can then review or edit it in Outlook and send it later with
  * sendDraft (outlook_send_draft).
  */
-export async function createReplyDraft(id: string, body: string, replyAll = false): Promise<Message> {
+export async function createReplyDraft(id: string, body: string, replyAll = false, mailbox?: string): Promise<Message> {
   const action = replyAll ? 'createreplyall' : 'createreply';
-  return owaPost<Message>(`/messages/${id}/${action}`, {
+  return postToMailbox<Message>(`/messages/${id}/${action}`, {
     Comment: toHtmlBody(body),
-  });
+  }, mailbox);
 }
 
 /**
@@ -272,57 +293,57 @@ export async function createReplyDraft(id: string, body: string, replyAll = fals
  * with the quoted original prefilled; recipients and any final edits can be set
  * in Outlook (or via a later update) before sending with sendDraft.
  */
-export async function createForwardDraft(id: string, body = '', to?: string[]): Promise<Message> {
+export async function createForwardDraft(id: string, body = '', to?: string[], mailbox?: string): Promise<Message> {
   const payload: Record<string, unknown> = { Comment: body ? toHtmlBody(body) : '' };
   if (to?.length) {
     payload.ToRecipients = to.map(addr => ({ EmailAddress: { Address: addr } }));
   }
-  return owaPost<Message>(`/messages/${id}/createforward`, payload);
+  return postToMailbox<Message>(`/messages/${id}/createforward`, payload, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Forward
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function forwardMessage(id: string, to: string[], comment?: string): Promise<void> {
-  await owaPost(`/messages/${id}/forward`, {
+export async function forwardMessage(id: string, to: string[], comment?: string, mailbox?: string): Promise<void> {
+  await postToMailbox(`/messages/${id}/forward`, {
     ToRecipients: to.map(addr => ({ EmailAddress: { Address: addr } })),
     Comment: comment ? toHtmlBody(comment) : '',
-  });
+  }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mark read/unread
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function markMessageRead(id: string, isRead = true): Promise<void> {
-  await owaPatch(`/messages/${id}`, { IsRead: isRead });
+export async function markMessageRead(id: string, isRead = true, mailbox?: string): Promise<void> {
+  await patchInMailbox(`/messages/${id}`, { IsRead: isRead }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flag
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function flagMessage(id: string, status: 'Flagged' | 'Complete' | 'NotFlagged' = 'Flagged'): Promise<void> {
-  await owaPatch(`/messages/${id}`, { Flag: { FlagStatus: status } });
+export async function flagMessage(id: string, status: 'Flagged' | 'Complete' | 'NotFlagged' = 'Flagged', mailbox?: string): Promise<void> {
+  await patchInMailbox(`/messages/${id}`, { Flag: { FlagStatus: status } }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Move
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function moveMessage(id: string, destinationFolderId: string): Promise<Message> {
-  return owaPost<Message>(`/messages/${id}/move`, {
+export async function moveMessage(id: string, destinationFolderId: string, mailbox?: string): Promise<Message> {
+  return postToMailbox<Message>(`/messages/${id}/move`, {
     DestinationId: destinationFolderId,
-  });
+  }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Delete
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function deleteMessage(id: string): Promise<void> {
-  await owaDelete(`/messages/${id}`);
+export async function deleteMessage(id: string, mailbox?: string): Promise<void> {
+  await deleteFromMailbox(`/messages/${id}`, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,6 +351,8 @@ export async function deleteMessage(id: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SearchMessagesOptions {
+  /** Shared/delegated mailbox UPN. Defaults to the signed-in user's mailbox. */
+  mailbox?: string;
   /** Keyword query. Optional: omit it to list everything in a date range. */
   query?: string;
   top?: number;
@@ -381,7 +404,7 @@ export async function searchMessages(opts: SearchMessagesOptions): Promise<Searc
   };
   if (opts.skipToken) params['$skiptoken'] = opts.skipToken;
 
-  const res = await owaGet<ODataResponse<Message>>(`/MailFolders/${folder}/messages`, params);
+  const res = await getFromMailbox<ODataResponse<Message>>(`/MailFolders/${folder}/messages`, params, opts.mailbox);
 
   let nextSkipToken: string | undefined;
   const nextLink = res['@odata.nextLink'];
@@ -400,24 +423,27 @@ export async function searchMessages(opts: SearchMessagesOptions): Promise<Searc
 // Folders
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function listFolders(): Promise<MailFolder[]> {
-  const res = await owaGet<ODataResponse<MailFolder>>('/mailfolders', {
+export async function listFolders(mailbox?: string): Promise<MailFolder[]> {
+  const res = await getFromMailbox<ODataResponse<MailFolder>>('/mailfolders', {
     '$top': '50',
     '$select': 'Id,DisplayName,UnreadItemCount,TotalItemCount,ChildFolderCount',
-  });
+  }, mailbox);
   return res.value;
 }
 
-export async function getFolder(idOrName: string): Promise<MailFolder> {
-  return owaGet<MailFolder>(`/mailfolders/${idOrName}`);
+export async function getFolder(idOrName: string, mailbox?: string): Promise<MailFolder> {
+  return mailbox
+    ? owaGet<MailFolder>(`/mailfolders/${idOrName}`, undefined, mailbox)
+    : owaGet<MailFolder>(`/mailfolders/${idOrName}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unread count
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getUnreadMessages(top = 10): Promise<Message[]> {
+export async function getUnreadMessages(top = 10, mailbox?: string): Promise<Message[]> {
   return listMessages({
+    mailbox,
     filter: 'IsRead eq false',
     top,
     orderBy: 'ReceivedDateTime desc',
@@ -428,8 +454,8 @@ export async function getUnreadMessages(top = 10): Promise<Message[]> {
 // Send draft
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function sendDraft(draftId: string): Promise<void> {
-  await owaPost(`/messages/${draftId}/send`, {});
+export async function sendDraft(draftId: string, mailbox?: string): Promise<void> {
+  await postToMailbox(`/messages/${draftId}/send`, {}, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -437,6 +463,8 @@ export async function sendDraft(draftId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface UpdateDraftOptions {
+  /** Shared/delegated mailbox UPN. Defaults to the signed-in user's mailbox. */
+  mailbox?: string;
   subject?: string;
   body?: string;
   bodyType?: 'Text' | 'HTML';
@@ -457,7 +485,7 @@ export async function updateDraft(id: string, opts: UpdateDraftOptions): Promise
   if (opts.cc) patch.CcRecipients = opts.cc.map(addr => ({ EmailAddress: { Address: addr } }));
   if (opts.bcc) patch.BccRecipients = opts.bcc.map(addr => ({ EmailAddress: { Address: addr } }));
   if (opts.importance) patch.Importance = opts.importance;
-  return owaPatch<Message>(`/messages/${id}`, patch);
+  return patchInMailbox<Message>(`/messages/${id}`, patch, opts.mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -472,35 +500,37 @@ export interface FileAttachmentContent {
   ContentBytes?: string;
 }
 
-export async function listAttachments(messageId: string): Promise<Attachment[]> {
-  const res = await owaGet<ODataResponse<Attachment>>(`/messages/${messageId}/attachments`, {
+export async function listAttachments(messageId: string, mailbox?: string): Promise<Attachment[]> {
+  const res = await getFromMailbox<ODataResponse<Attachment>>(`/messages/${messageId}/attachments`, {
     '$select': 'Id,Name,ContentType,Size,IsInline',
-  });
+  }, mailbox);
   return res.value;
 }
 
 /** Fetch one attachment including its base64 content bytes. */
-export async function getAttachmentContent(messageId: string, attachmentId: string): Promise<FileAttachmentContent> {
-  return owaGet<FileAttachmentContent>(`/messages/${messageId}/attachments/${attachmentId}`);
+export async function getAttachmentContent(messageId: string, attachmentId: string, mailbox?: string): Promise<FileAttachmentContent> {
+  return mailbox
+    ? owaGet<FileAttachmentContent>(`/messages/${messageId}/attachments/${attachmentId}`, undefined, mailbox)
+    : owaGet<FileAttachmentContent>(`/messages/${messageId}/attachments/${attachmentId}`);
 }
 
 /** Add a file attachment to an existing message/draft. */
-export async function addAttachment(messageId: string, attachment: OutgoingAttachment): Promise<void> {
-  await owaPost(`/messages/${messageId}/attachments`, toOwaAttachment(attachment));
+export async function addAttachment(messageId: string, attachment: OutgoingAttachment, mailbox?: string): Promise<void> {
+  await postToMailbox(`/messages/${messageId}/attachments`, toOwaAttachment(attachment), mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Conversation (thread)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getConversation(conversationId: string, top = 50): Promise<Message[]> {
+export async function getConversation(conversationId: string, top = 50, mailbox?: string): Promise<Message[]> {
   // Filtering by ConversationId cannot be combined with $orderby (the API
   // rejects it as an inefficient filter), so we sort by received date here.
-  const res = await owaGet<ODataResponse<Message>>('/messages', {
+  const res = await getFromMailbox<ODataResponse<Message>>('/messages', {
     '$filter': `ConversationId eq '${conversationId.replace(/'/g, "''")}'`,
     '$top': String(top),
     '$select': 'Id,Subject,BodyPreview,From,ToRecipients,ReceivedDateTime,IsRead,HasAttachments,ConversationId,WebLink',
-  });
+  }, mailbox);
   return res.value.sort((a, b) => (a.ReceivedDateTime ?? '').localeCompare(b.ReceivedDateTime ?? ''));
 }
 
@@ -508,23 +538,23 @@ export async function getConversation(conversationId: string, top = 50): Promise
 // Categories
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function setCategories(messageId: string, categories: string[]): Promise<Message> {
-  return owaPatch<Message>(`/messages/${messageId}`, { Categories: categories });
+export async function setCategories(messageId: string, categories: string[], mailbox?: string): Promise<Message> {
+  return patchInMailbox<Message>(`/messages/${messageId}`, { Categories: categories }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Folder management
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function createFolder(displayName: string, parentFolderId?: string): Promise<MailFolder> {
+export async function createFolder(displayName: string, parentFolderId?: string, mailbox?: string): Promise<MailFolder> {
   const path = parentFolderId ? `/mailfolders/${parentFolderId}/childfolders` : '/mailfolders';
-  return owaPost<MailFolder>(path, { DisplayName: displayName });
+  return postToMailbox<MailFolder>(path, { DisplayName: displayName }, mailbox);
 }
 
-export async function renameFolder(id: string, displayName: string): Promise<MailFolder> {
-  return owaPatch<MailFolder>(`/mailfolders/${id}`, { DisplayName: displayName });
+export async function renameFolder(id: string, displayName: string, mailbox?: string): Promise<MailFolder> {
+  return patchInMailbox<MailFolder>(`/mailfolders/${id}`, { DisplayName: displayName }, mailbox);
 }
 
-export async function deleteFolder(id: string): Promise<void> {
-  await owaDelete(`/mailfolders/${id}`);
+export async function deleteFolder(id: string, mailbox?: string): Promise<void> {
+  await deleteFromMailbox(`/mailfolders/${id}`, mailbox);
 }

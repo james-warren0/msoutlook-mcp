@@ -20,6 +20,7 @@ Most Outlook MCP servers make you register an Azure AD application, grant admin 
 - **Safe by default.** Email bodies are sent as HTML so line breaks always render, and the draft tools let you compose and review before anything is sent.
 - **Scheduling and availability.** Read free/busy, find meeting times across attendees, and check who is out of office.
 - **Cross platform.** macOS, Linux, and Windows, with automatic browser detection.
+- **Shared mailboxes.** Pass a delegated mailbox address through the optional `mailbox` parameter on mail tools; omit it to use your own mailbox.
 
 ## How it works
 
@@ -69,6 +70,17 @@ Then run `outlook_login` from your MCP client. On first use a browser opens so y
 - **HTML by default.** `outlook_send_email`, `outlook_create_draft`, and the reply/forward tools render their body as HTML, so use `<br>`, `<br><br>`, and `<ul><li>` for structure. Plain text is still accepted: its newlines are converted to `<br>` automatically, so a message never arrives as one collapsed block.
 - **Review before sending.** Prefer the draft tools (`outlook_create_draft`, `outlook_create_reply_draft`, `outlook_create_forward_draft`) so you can review or edit with `outlook_update_draft` and then send with `outlook_send_draft`. The immediate tools (`outlook_send_email`, `outlook_reply`, `outlook_forward`) send straight away.
 - **Presence caveat.** `outlook_get_availability` reports free/busy and out of office, which is what Outlook can read. The live Teams presence dot (Available / Away / DoNotDisturb) needs a Teams token and is not available here.
+
+## Shared mailboxes
+
+Every mail tool accepts an optional `mailbox` parameter. Set it to the email
+address of a shared or delegated mailbox, for example
+`hashicorp.security@example.com`. The signed-in account must already have the
+required permission for that mailbox. When `mailbox` is omitted, operations
+continue to target the signed-in user's mailbox.
+
+Reply drafts, new drafts, updates, and sends remain in the selected mailbox, so
+pass the same `mailbox` value throughout a draft workflow.
 
 ## Tools
 

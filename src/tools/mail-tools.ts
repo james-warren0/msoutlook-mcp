@@ -40,6 +40,10 @@ import {
 // Formatters
 // ─────────────────────────────────────────────────────────────────────────────
 
+const mailboxSchema = z.string().email().optional().describe(
+  'Shared/delegated mailbox email address. Omit to use the signed-in user mailbox.',
+);
+
 function formatMessage(m: Message, full = false): string {
   const from = m.From?.EmailAddress
     ? `${m.From.EmailAddress.Name ?? ''} <${m.From.EmailAddress.Address}>`
@@ -105,20 +109,22 @@ export function registerMailTools(server: McpServer): void {
     'outlook_list_emails',
     'List emails from a mail folder. Defaults to Inbox, newest first.',
     {
+      mailbox: mailboxSchema,
       folder: z.string().optional().describe('Folder name or ID. Defaults to Inbox. Common values: Inbox, Drafts, SentItems, DeletedItems, Archive, JunkEmail'),
       top: z.number().int().min(1).max(100).optional().describe('Number of emails to return (default 20, max 100)'),
       unread_only: z.boolean().optional().describe('If true, return only unread emails'),
       mark_read: z.boolean().optional().describe('If true, mark fetched emails as read. Default: false'),
     },
-    async ({ folder, top, unread_only, mark_read }) => {
+    async ({ mailbox, folder, top, unread_only, mark_read }) => {
       const messages = await listMessages({
+        mailbox,
         folder: folder ?? 'Inbox',
         top: top ?? 20,
         filter: unread_only ? 'IsRead eq false' : undefined,
       });
 
       if (mark_read) {
-        await Promise.all(messages.map(m => markMessageRead(m.Id)));
+        await Promise.all(messages.map(m => markMessageRead(m.Id, true, mailbox)));
       }
 
       return { content: [{ type: 'text', text: formatMessageList(messages) }] };
@@ -130,15 +136,16 @@ export function registerMailTools(server: McpServer): void {
     'outlook_get_email',
     'Read the full content of a specific email by ID.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('The email message ID (from outlook_list_emails)'),
       include_attachments: z.boolean().optional().describe('Include attachment metadata (default: false)'),
       mark_read: z.boolean().optional().describe('Mark as read when fetching (default: false)'),
     },
-    async ({ id, include_attachments, mark_read }) => {
-      const message = await getMessage(id, include_attachments ?? false);
+    async ({ mailbox, id, include_attachments, mark_read }) => {
+      const message = await getMessage(id, include_attachments ?? false, mailbox);
 
       if (mark_read && !message.IsRead) {
-        await markMessageRead(id);
+        await markMessageRead(id, true, mailbox);
       }
 
       let text = formatMessage(message, true);
@@ -157,10 +164,11 @@ export function registerMailTools(server: McpServer): void {
     'outlook_get_unread',
     'Get a list of unread emails from the Inbox.',
     {
+      mailbox: mailboxSchema,
       top: z.number().int().min(1).max(50).optional().describe('Number to return (default 10)'),
     },
-    async ({ top }) => {
-      const messages = await getUnreadMessages(top ?? 10);
+    async ({ mailbox, top }) => {
+      const messages = await getUnreadMessages(top ?? 10, mailbox);
       const count = messages.length;
       const header = `${count} unread email${count !== 1 ? 's' : ''}:\n\n`;
       return { content: [{ type: 'text', text: header + formatMessageList(messages) }] };
@@ -172,6 +180,7 @@ export function registerMailTools(server: McpServer): void {
     'outlook_send_email',
     'Send an email immediately. Body format defaults to HTML (body_type HTML). Prefer the review first flow: unless the user has asked to send straight away, create the message with outlook_create_draft so they can review it, then send with outlook_send_draft once approved. Always confirm content with the user before calling this tool. Write structure with HTML (<br> for a line break, <br><br> for a paragraph gap, <ul><li>...</li></ul> for lists). Plain text is still accepted and its newlines are converted to <br> automatically, so a multi line message never arrives as one block.',
     {
+      mailbox: mailboxSchema,
       to: z.array(z.string().email()).describe('List of recipient email addresses'),
       cc: z.array(z.string().email()).optional().describe('CC recipients'),
       bcc: z.array(z.string().email()).optional().describe('BCC recipients'),
@@ -181,9 +190,10 @@ export function registerMailTools(server: McpServer): void {
       importance: z.enum(['Low', 'Normal', 'High']).optional().describe('Email importance (default: Normal)'),
       attachments: z.array(z.string()).optional().describe('Local file paths to attach. Each file is read from disk and attached.'),
     },
-    async ({ to, cc, bcc, subject, body, body_type, importance, attachments }) => {
+    async ({ mailbox, to, cc, bcc, subject, body, body_type, importance, attachments }) => {
       const files = attachments?.length ? await Promise.all(attachments.map(fileToAttachment)) : undefined;
       await sendEmail({
+        mailbox,
         to,
         cc,
         bcc,
@@ -203,6 +213,7 @@ export function registerMailTools(server: McpServer): void {
     'outlook_create_draft',
     'Create a draft email without sending it. This is the preferred way to compose a new email: create the draft here so the user can review it in Outlook, then send it with outlook_send_draft once they approve, unless the user has asked to send straight away. Body format defaults to HTML (body_type HTML): use HTML for layout (<br>, <br><br>, <ul><li>). Plain text newlines are auto converted to <br> so the draft keeps its line breaks.',
     {
+      mailbox: mailboxSchema,
       to: z.array(z.string().email()).describe('Recipient email addresses'),
       cc: z.array(z.string().email()).optional().describe('CC recipients'),
       subject: z.string().describe('Email subject'),
@@ -210,9 +221,9 @@ export function registerMailTools(server: McpServer): void {
       body_type: z.enum(['Text', 'HTML']).optional().describe('Body format. Default: HTML. Only use Text for a literal plain text body with no auto formatting.'),
       attachments: z.array(z.string()).optional().describe('Local file paths to attach to the draft.'),
     },
-    async ({ to, cc, subject, body, body_type, attachments }) => {
+    async ({ mailbox, to, cc, subject, body, body_type, attachments }) => {
       const files = attachments?.length ? await Promise.all(attachments.map(fileToAttachment)) : undefined;
-      const draft = await createDraft({ to, cc, subject, body, bodyType: body_type, attachments: files });
+      const draft = await createDraft({ mailbox, to, cc, subject, body, bodyType: body_type, attachments: files });
       return {
         content: [{
           type: 'text',
@@ -227,10 +238,11 @@ export function registerMailTools(server: McpServer): void {
     'outlook_send_draft',
     'Send a previously created draft email by its ID.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Draft message ID'),
     },
-    async ({ id }) => {
-      await sendDraft(id);
+    async ({ mailbox, id }) => {
+      await sendDraft(id, mailbox);
       return { content: [{ type: 'text', text: 'Draft sent successfully.' }] };
     },
   );
@@ -240,12 +252,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_reply',
     'Reply to an email, staying in the same thread and keeping all recipients when reply_all is true. This sends immediately, there is no separate reply draft, so confirm the content with the user before calling unless they have asked to send straight away. The reply is always rendered as HTML, so use HTML for layout (<br>, <br><br>, <ul><li>). Plain text is accepted and its newlines are auto converted to <br>, so a multi paragraph reply never collapses into one block.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to reply to'),
       body: z.string().describe('Reply body. Prefer HTML markup (<br>, <ul><li>) for layout. Plain text is fine too: its newlines are auto converted to <br>.'),
       reply_all: z.boolean().optional().describe('If true, reply to all recipients and keep every CC on the thread (default: false)'),
     },
-    async ({ id, body, reply_all }) => {
-      await replyToMessage(id, body, reply_all ?? false);
+    async ({ mailbox, id, body, reply_all }) => {
+      await replyToMessage(id, body, reply_all ?? false, mailbox);
       return { content: [{ type: 'text', text: 'Reply sent.' }] };
     },
   );
@@ -255,12 +268,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_create_reply_draft',
     'Create a reply (or reply-all) as a DRAFT instead of sending it. This is the review-first way to reply: the draft is saved to Drafts with the recipients and quoted original prefilled and your text inserted above the quote, so the user can review or edit it in Outlook, then send it with outlook_send_draft once approved. Prefer this over outlook_reply unless the user has asked to send straight away. Body is rendered as HTML: use HTML for layout (<br>, <br><br>, <ul><li>); plain text newlines are auto converted to <br>.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to reply to'),
       body: z.string().describe('Reply body. Prefer HTML markup (<br>, <ul><li>) for layout. Plain text is fine too: its newlines are auto converted to <br>.'),
       reply_all: z.boolean().optional().describe('If true, reply to all recipients and keep every CC on the thread (default: false)'),
     },
-    async ({ id, body, reply_all }) => {
-      const draft = await createReplyDraft(id, body, reply_all ?? false);
+    async ({ mailbox, id, body, reply_all }) => {
+      const draft = await createReplyDraft(id, body, reply_all ?? false, mailbox);
       return {
         content: [{
           type: 'text',
@@ -275,12 +289,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_create_forward_draft',
     'Create a forward as a DRAFT instead of sending it. The draft is saved to Drafts with the quoted original prefilled; recipients can be set here or added later in Outlook. Review or edit, then send with outlook_send_draft. Body is rendered as HTML: use HTML for layout; plain text newlines are auto converted to <br>.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to forward'),
       to: z.array(z.string().email()).optional().describe('Optional recipients to prefill on the forward draft'),
       comment: z.string().optional().describe('Optional message to add above the forwarded content. HTML preferred; plain text newlines are auto converted to <br>.'),
     },
-    async ({ id, to, comment }) => {
-      const draft = await createForwardDraft(id, comment ?? '', to);
+    async ({ mailbox, id, to, comment }) => {
+      const draft = await createForwardDraft(id, comment ?? '', to, mailbox);
       return {
         content: [{
           type: 'text',
@@ -295,12 +310,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_forward',
     'Forward an email to one or more recipients.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to forward'),
       to: z.array(z.string().email()).describe('Forward to these addresses'),
       comment: z.string().optional().describe('Optional message to include with the forward. Rendered as HTML: use HTML for layout, or plain text whose newlines are auto converted to <br>.'),
     },
-    async ({ id, to, comment }) => {
-      await forwardMessage(id, to, comment);
+    async ({ mailbox, id, to, comment }) => {
+      await forwardMessage(id, to, comment, mailbox);
       return { content: [{ type: 'text', text: `Forwarded to ${to.join(', ')}.` }] };
     },
   );
@@ -310,11 +326,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_mark_read',
     'Mark an email as read or unread.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID'),
       is_read: z.boolean().describe('True to mark as read, false to mark as unread'),
     },
-    async ({ id, is_read }) => {
-      await markMessageRead(id, is_read);
+    async ({ mailbox, id, is_read }) => {
+      await markMessageRead(id, is_read, mailbox);
       return { content: [{ type: 'text', text: `Message marked as ${is_read ? 'read' : 'unread'}.` }] };
     },
   );
@@ -324,11 +341,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_flag',
     'Flag or unflag an email.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID'),
       status: z.enum(['Flagged', 'Complete', 'NotFlagged']).describe('Flag status to set'),
     },
-    async ({ id, status }) => {
-      await flagMessage(id, status);
+    async ({ mailbox, id, status }) => {
+      await flagMessage(id, status, mailbox);
       return { content: [{ type: 'text', text: `Message flag set to: ${status}.` }] };
     },
   );
@@ -338,11 +356,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_move_email',
     'Move an email to a different folder.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to move'),
       destination_folder: z.string().describe('Destination folder name or ID (e.g. Archive, DeletedItems, Inbox, or a folder ID)'),
     },
-    async ({ id, destination_folder }) => {
-      const moved = await moveMessage(id, destination_folder);
+    async ({ mailbox, id, destination_folder }) => {
+      const moved = await moveMessage(id, destination_folder, mailbox);
       return { content: [{ type: 'text', text: `Message moved to ${destination_folder}.\nNew ID: ${moved.Id}` }] };
     },
   );
@@ -352,10 +371,11 @@ export function registerMailTools(server: McpServer): void {
     'outlook_delete_email',
     'Delete an email (moves to Deleted Items).',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Message ID to delete'),
     },
-    async ({ id }) => {
-      await deleteMessage(id);
+    async ({ mailbox, id }) => {
+      await deleteMessage(id, mailbox);
       return { content: [{ type: 'text', text: 'Message deleted.' }] };
     },
   );
@@ -365,24 +385,25 @@ export function registerMailTools(server: McpServer): void {
     'outlook_batch',
     'Run one bulk action on many emails at once. Far faster than calling the single item tools repeatedly. Returns a per id success and failure summary.',
     {
+      mailbox: mailboxSchema,
       action: z.enum(['mark_read', 'mark_unread', 'delete', 'flag', 'unflag', 'move'])
         .describe('Action to apply to every ID. "move" requires destination_folder.'),
       ids: z.array(z.string()).min(1).max(200).describe('Message IDs to act on (1 to 200)'),
       destination_folder: z.string().optional().describe('Required when action is "move": folder name or ID (e.g. Archive, DeletedItems, or a folder ID)'),
     },
-    async ({ action, ids, destination_folder }) => {
+    async ({ mailbox, action, ids, destination_folder }) => {
       if (action === 'move' && !destination_folder) {
         return { content: [{ type: 'text', text: 'destination_folder is required when action is "move".' }] };
       }
 
       const opFor = (id: string): Promise<unknown> => {
         switch (action) {
-          case 'mark_read': return markMessageRead(id, true);
-          case 'mark_unread': return markMessageRead(id, false);
-          case 'delete': return deleteMessage(id);
-          case 'flag': return flagMessage(id, 'Flagged');
-          case 'unflag': return flagMessage(id, 'NotFlagged');
-          case 'move': return moveMessage(id, destination_folder!);
+          case 'mark_read': return markMessageRead(id, true, mailbox);
+          case 'mark_unread': return markMessageRead(id, false, mailbox);
+          case 'delete': return deleteMessage(id, mailbox);
+          case 'flag': return flagMessage(id, 'Flagged', mailbox);
+          case 'unflag': return flagMessage(id, 'NotFlagged', mailbox);
+          case 'move': return moveMessage(id, destination_folder!, mailbox);
         }
       };
 
@@ -397,6 +418,7 @@ export function registerMailTools(server: McpServer): void {
     'outlook_search_emails',
     'Search emails by keyword across subject and body, with optional received date range and pagination. Omit query to list everything in a date range.',
     {
+      mailbox: mailboxSchema,
       query: z.string().optional().describe('Search query (keywords, sender name, subject, etc.). Optional: leave empty to list everything that matches the date range.'),
       top: z.number().int().min(1).max(50).optional().describe('Page size (default 20, max 50)'),
       start_date: z.string().optional().describe('Only emails received on or after this date. ISO date (YYYY-MM-DD) or datetime.'),
@@ -404,8 +426,9 @@ export function registerMailTools(server: McpServer): void {
       folder: z.string().optional().describe('Folder to search (default Inbox). E.g. Inbox, Archive, SentItems.'),
       skip_token: z.string().optional().describe('To get the next page, pass the next_skip_token returned by a previous call.'),
     },
-    async ({ query, top, start_date, end_date, folder, skip_token }) => {
+    async ({ mailbox, query, top, start_date, end_date, folder, skip_token }) => {
       const { messages, nextSkipToken } = await searchMessages({
+        mailbox,
         query,
         top: top ?? 20,
         startDate: start_date,
@@ -426,9 +449,9 @@ export function registerMailTools(server: McpServer): void {
   server.tool(
     'outlook_list_folders',
     'List all mail folders with unread counts.',
-    {},
-    async () => {
-      const folders = await listFolders();
+    { mailbox: mailboxSchema },
+    async ({ mailbox }) => {
+      const folders = await listFolders(mailbox);
       const text = folders
         .map(f => `${f.DisplayName} (ID: ${f.Id}) | Unread: ${f.UnreadItemCount} / ${f.TotalItemCount}`)
         .join('\n');
@@ -441,6 +464,7 @@ export function registerMailTools(server: McpServer): void {
     'outlook_update_draft',
     'Edit an existing draft: change its subject, recipients, body, or importance. Useful for tweaking a reply or forward draft before sending it with outlook_send_draft. Only the fields you pass are changed. Body follows the same HTML rules as sending.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Draft message ID'),
       subject: z.string().optional().describe('New subject'),
       body: z.string().optional().describe('New body. Prefer HTML; plain text newlines auto convert to <br>.'),
@@ -449,8 +473,8 @@ export function registerMailTools(server: McpServer): void {
       bcc: z.array(z.string().email()).optional().describe('Replace the BCC recipients'),
       importance: z.enum(['Low', 'Normal', 'High']).optional(),
     },
-    async ({ id, subject, body, to, cc, bcc, importance }) => {
-      const draft = await updateDraft(id, { subject, body, to, cc, bcc, importance });
+    async ({ mailbox, id, subject, body, to, cc, bcc, importance }) => {
+      const draft = await updateDraft(id, { mailbox, subject, body, to, cc, bcc, importance });
       return { content: [{ type: 'text', text: `Draft updated.\nID: ${draft.Id}\nSubject: ${draft.Subject}` }] };
     },
   );
@@ -460,12 +484,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_add_attachment',
     'Attach a local file to an existing draft (including a reply or forward draft). Read the file from disk and add it. Combine with outlook_create_reply_draft or outlook_create_draft, then outlook_send_draft.',
     {
+      mailbox: mailboxSchema,
       message_id: z.string().describe('Draft message ID to attach to'),
       file_path: z.string().describe('Local file path to attach'),
     },
-    async ({ message_id, file_path }) => {
+    async ({ mailbox, message_id, file_path }) => {
       const attachment = await fileToAttachment(file_path);
-      await addAttachment(message_id, attachment);
+      await addAttachment(message_id, attachment, mailbox);
       return { content: [{ type: 'text', text: `Attached ${attachment.name} to draft ${message_id}.` }] };
     },
   );
@@ -475,10 +500,11 @@ export function registerMailTools(server: McpServer): void {
     'outlook_list_attachments',
     'List the attachments on an email (name, type, size, and attachment ID for downloading).',
     {
+      mailbox: mailboxSchema,
       message_id: z.string().describe('Message ID'),
     },
-    async ({ message_id }) => {
-      const items = await listAttachments(message_id);
+    async ({ mailbox, message_id }) => {
+      const items = await listAttachments(message_id, mailbox);
       if (items.length === 0) return { content: [{ type: 'text', text: 'No attachments.' }] };
       const text = items.map((a: Attachment) => `- ${a.Name} (${a.ContentType}, ${Math.round(a.Size / 1024)}KB)${a.IsInline ? ' [inline]' : ''}\n  ID: ${a.Id}`).join('\n');
       return { content: [{ type: 'text', text }] };
@@ -490,12 +516,13 @@ export function registerMailTools(server: McpServer): void {
     'outlook_save_attachment',
     'Download an email attachment and save it to a local file path. Use outlook_list_attachments first to get the attachment ID.',
     {
+      mailbox: mailboxSchema,
       message_id: z.string().describe('Message ID the attachment belongs to'),
       attachment_id: z.string().describe('Attachment ID (from outlook_list_attachments)'),
       output_path: z.string().describe('Local file path to write the attachment to'),
     },
-    async ({ message_id, attachment_id, output_path }) => {
-      const att = await getAttachmentContent(message_id, attachment_id);
+    async ({ mailbox, message_id, attachment_id, output_path }) => {
+      const att = await getAttachmentContent(message_id, attachment_id, mailbox);
       if (!att.ContentBytes) {
         return { content: [{ type: 'text', text: `Attachment ${att.Name} has no downloadable content (it may be an item or reference attachment).` }] };
       }
@@ -509,11 +536,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_get_conversation',
     'Get every message in a conversation/thread, oldest first, by conversation ID. The conversation ID comes from any message in the thread (outlook_get_email / outlook_list_emails). Useful for reading a whole back-and-forth before replying.',
     {
+      mailbox: mailboxSchema,
       conversation_id: z.string().describe('Conversation ID shared by all messages in the thread'),
       top: z.number().int().min(1).max(100).optional().describe('Max messages to return (default 50)'),
     },
-    async ({ conversation_id, top }) => {
-      const messages = await getConversation(conversation_id, top ?? 50);
+    async ({ mailbox, conversation_id, top }) => {
+      const messages = await getConversation(conversation_id, top ?? 50, mailbox);
       return { content: [{ type: 'text', text: formatMessageList(messages) }] };
     },
   );
@@ -523,11 +551,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_set_categories',
     'Set the colour categories (labels) on an email. This replaces the existing categories with the list you pass; pass an empty list to clear them.',
     {
+      mailbox: mailboxSchema,
       message_id: z.string().describe('Message ID'),
       categories: z.array(z.string()).describe('Category names to set (replaces existing). Empty list clears them.'),
     },
-    async ({ message_id, categories }) => {
-      await setCategories(message_id, categories);
+    async ({ mailbox, message_id, categories }) => {
+      await setCategories(message_id, categories, mailbox);
       const text = categories.length ? `Categories set: ${categories.join(', ')}.` : 'Categories cleared.';
       return { content: [{ type: 'text', text }] };
     },
@@ -538,11 +567,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_create_folder',
     'Create a new mail folder, optionally nested under a parent folder.',
     {
+      mailbox: mailboxSchema,
       name: z.string().describe('Folder display name'),
       parent_folder_id: z.string().optional().describe('Parent folder ID to nest under (defaults to top level)'),
     },
-    async ({ name, parent_folder_id }) => {
-      const folder = await createFolder(name, parent_folder_id);
+    async ({ mailbox, name, parent_folder_id }) => {
+      const folder = await createFolder(name, parent_folder_id, mailbox);
       return { content: [{ type: 'text', text: `Folder created.\nID: ${folder.Id}\nName: ${folder.DisplayName}` }] };
     },
   );
@@ -552,11 +582,12 @@ export function registerMailTools(server: McpServer): void {
     'outlook_rename_folder',
     'Rename an existing mail folder.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Folder ID to rename'),
       name: z.string().describe('New folder display name'),
     },
-    async ({ id, name }) => {
-      const folder = await renameFolder(id, name);
+    async ({ mailbox, id, name }) => {
+      const folder = await renameFolder(id, name, mailbox);
       return { content: [{ type: 'text', text: `Folder renamed to ${folder.DisplayName}.` }] };
     },
   );
@@ -566,10 +597,11 @@ export function registerMailTools(server: McpServer): void {
     'outlook_delete_folder',
     'Delete a mail folder and everything in it. This is destructive: confirm with the user and double check the folder ID before calling.',
     {
+      mailbox: mailboxSchema,
       id: z.string().describe('Folder ID to delete'),
     },
-    async ({ id }) => {
-      await deleteFolder(id);
+    async ({ mailbox, id }) => {
+      await deleteFolder(id, mailbox);
       return { content: [{ type: 'text', text: 'Folder deleted.' }] };
     },
   );

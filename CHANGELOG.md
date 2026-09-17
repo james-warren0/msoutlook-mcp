@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Mail tools now accept an optional `mailbox` address for shared and delegated mailbox operations while continuing to use the signed-in user's mailbox by default.
+
+### Fixed
+- Token extraction no longer mistakes Outlook Search tokens for Outlook Mail API tokens when both are present in the MSAL cache.
+
 ## [0.4.2] - 2026-09-03
 
 ### Fixed

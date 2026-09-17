@@ -14,7 +14,7 @@ vi.mock('../utils/http.js', () => ({
 import { getOwaToken, getGraphToken } from '../auth/index.js';
 import { getBearerHeaders, parseResponse, fetchWithRetry } from '../utils/http.js';
 import {
-  owaGet, owaPost, owaPatch, owaDelete,
+  owaMailboxRoot, owaGet, owaPost, owaPatch, owaDelete,
   graphGet, graphPost, graphGetPath, graphGetBinary,
 } from './client.js';
 import { OWA_REST_V2, GRAPH_BASE, OWA_BASE } from '../constants.js';
@@ -28,6 +28,21 @@ const mFetchWithRetry = vi.mocked(fetchWithRetry);
 beforeEach(() => {
   vi.clearAllMocks();
   mGetBearerHeaders.mockReturnValue({ Authorization: 'Bearer x' } as Record<string, string>);
+});
+
+describe('owaMailboxRoot', () => {
+  it('uses the signed-in mailbox by default', () => {
+    expect(owaMailboxRoot()).toBe(`${OWA_REST_V2}/me`);
+  });
+
+  it('encodes a shared mailbox UPN', () => {
+    expect(owaMailboxRoot(' shared.mailbox@example.com '))
+      .toBe(`${OWA_REST_V2}/users/shared.mailbox%40example.com`);
+  });
+
+  it('rejects invalid mailbox values', () => {
+    expect(() => owaMailboxRoot('../other-user')).toThrow('valid email address');
+  });
 });
 
 describe('owaGet', () => {
@@ -73,6 +88,17 @@ describe('owaGet', () => {
     const url = mFetchWithRetry.mock.calls[0][0] as string;
     expect(url).toBe(`${OWA_REST_V2}/me/messages?foo=bar&a=b`);
   });
+
+  it('targets a shared mailbox', async () => {
+    mGetOwaToken.mockResolvedValue('tok');
+    mFetchWithRetry.mockResolvedValue({} as Response);
+    mParseResponse.mockResolvedValue([]);
+
+    await owaGet('/messages', undefined, 'shared@example.com');
+
+    expect(mFetchWithRetry.mock.calls[0][0])
+      .toBe(`${OWA_REST_V2}/users/shared%40example.com/messages`);
+  });
 });
 
 describe('owaPost', () => {
@@ -95,6 +121,17 @@ describe('owaPost', () => {
       body: JSON.stringify({ Subject: 'Hi' }),
     });
   });
+
+  it('posts to a shared mailbox', async () => {
+    mGetOwaToken.mockResolvedValue('tok');
+    mFetchWithRetry.mockResolvedValue({} as Response);
+    mParseResponse.mockResolvedValue({ id: 'm1' });
+
+    await owaPost('/messages/1/createreply', {}, 'shared@example.com');
+
+    expect(mFetchWithRetry.mock.calls[0][0])
+      .toBe(`${OWA_REST_V2}/users/shared%40example.com/messages/1/createreply`);
+  });
 });
 
 describe('owaPatch', () => {
@@ -116,6 +153,17 @@ describe('owaPatch', () => {
       headers: { Authorization: 'Bearer x' },
       body: JSON.stringify({ IsRead: true }),
     });
+  });
+
+  it('patches a shared mailbox', async () => {
+    mGetOwaToken.mockResolvedValue('tok');
+    mFetchWithRetry.mockResolvedValue({} as Response);
+    mParseResponse.mockResolvedValue({ ok: true });
+
+    await owaPatch('/messages/1', { IsRead: true }, 'shared@example.com');
+
+    expect(mFetchWithRetry.mock.calls[0][0])
+      .toBe(`${OWA_REST_V2}/users/shared%40example.com/messages/1`);
   });
 });
 
@@ -163,6 +211,16 @@ describe('owaDelete', () => {
     } as unknown as Response);
 
     await expect(owaDelete('/messages/1')).rejects.toThrow('HTTP 500: ');
+  });
+
+  it('deletes from a shared mailbox', async () => {
+    mGetOwaToken.mockResolvedValue('tok');
+    mFetchWithRetry.mockResolvedValue({ ok: true, status: 204 } as Response);
+
+    await owaDelete('/messages/1', 'shared@example.com');
+
+    expect(mFetchWithRetry.mock.calls[0][0])
+      .toBe(`${OWA_REST_V2}/users/shared%40example.com/messages/1`);
   });
 });
 
