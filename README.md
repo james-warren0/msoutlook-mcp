@@ -98,6 +98,7 @@ pass the same `mailbox` value throughout a draft workflow.
 |------|-------------|
 | `outlook_list_emails` | List emails from any folder (Inbox by default) |
 | `outlook_get_email` | Read full email content by ID |
+| `outlook_get_email_headers` | Read the Internet Message ID and raw transport headers, including Received and authentication results |
 | `outlook_get_unread` | Get unread emails from Inbox |
 | `outlook_search_emails` | Search emails by keyword, with optional received date range and pagination. Omit the keyword to list everything in a date range |
 | `outlook_send_email` | Send an email (HTML body by default; plain text newlines auto convert to `<br>`; supports file `attachments`) |

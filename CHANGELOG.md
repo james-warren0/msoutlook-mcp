@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 - Mail tools now accept an optional `mailbox` address for shared and delegated mailbox operations while continuing to use the signed-in user's mailbox by default.
+- `outlook_get_email_headers` returns the Internet Message ID and raw transport headers without changing message state.
 
 ### Fixed
 - Token extraction no longer mistakes Outlook Search tokens for Outlook Mail API tokens when both are present in the MSAL cache.

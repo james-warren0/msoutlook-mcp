@@ -8,6 +8,7 @@ import { z } from 'zod';
 import {
   listMessages,
   getMessage,
+  getMessageHeaders,
   sendEmail,
   createDraft,
   replyToMessage,
@@ -156,6 +157,29 @@ export function registerMailTools(server: McpServer): void {
       }
 
       return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  // ── outlook_get_email_headers ────────────────────────────────────────────
+  server.tool(
+    'outlook_get_email_headers',
+    'Read the Internet Message ID and raw transport headers for an email. Duplicate headers such as Received are preserved in their original order.',
+    {
+      mailbox: mailboxSchema,
+      id: z.string().describe('The email message ID (from outlook_list_emails or outlook_search_emails)'),
+    },
+    async ({ mailbox, id }) => {
+      const message = await getMessageHeaders(id, mailbox);
+      const headers = message.InternetMessageHeaders ?? [];
+      const lines = [
+        `ID: ${message.Id}`,
+        `Subject: ${message.Subject ?? ''}`,
+        `Internet Message ID: ${message.InternetMessageId ?? ''}`,
+        '',
+        'Headers:',
+        ...headers.map(header => `${header.Name}: ${header.Value}`),
+      ];
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
     },
   );
 

@@ -14,7 +14,7 @@ vi.mock('node:fs/promises', () => ({
 import { owaGet, owaPost, owaPatch, owaDelete } from './client.js';
 import { readFile } from 'node:fs/promises';
 import {
-  looksLikeHtml, toHtmlBody, fileToAttachment, listMessages, getMessage,
+  looksLikeHtml, toHtmlBody, fileToAttachment, listMessages, getMessage, getMessageHeaders,
   sendEmail, createDraft, replyToMessage, createReplyDraft, createForwardDraft,
   forwardMessage, markMessageRead, flagMessage, moveMessage, deleteMessage,
   searchMessages, listFolders, getFolder, getUnreadMessages, sendDraft,
@@ -118,6 +118,26 @@ describe('getMessage', () => {
     mGet.mockResolvedValue({ Id: '1' });
     await getMessage('1', true);
     expect(mGet).toHaveBeenCalledWith('/messages/1', { '$expand': 'Attachments' });
+  });
+});
+
+describe('getMessageHeaders', () => {
+  it('selects transport headers from the signed-in mailbox', async () => {
+    mGet.mockResolvedValue({ Id: '1', InternetMessageHeaders: [] });
+    await getMessageHeaders('1');
+    expect(mGet).toHaveBeenCalledWith('/messages/1', {
+      '$select': 'Id,Subject,InternetMessageId,InternetMessageHeaders',
+    });
+  });
+
+  it('selects transport headers from a shared mailbox', async () => {
+    mGet.mockResolvedValue({ Id: '1', InternetMessageHeaders: [] });
+    await getMessageHeaders('1', 'shared@example.com');
+    expect(mGet).toHaveBeenCalledWith(
+      '/messages/1',
+      { '$select': 'Id,Subject,InternetMessageId,InternetMessageHeaders' },
+      'shared@example.com',
+    );
   });
 });
 

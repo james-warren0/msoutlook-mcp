@@ -87,6 +87,13 @@ export interface Message {
   ParentFolderId?: string;
   WebLink?: string;
   Attachments?: Attachment[];
+  InternetMessageId?: string;
+  InternetMessageHeaders?: InternetMessageHeader[];
+}
+
+export interface InternetMessageHeader {
+  Name: string;
+  Value: string;
 }
 
 export interface Attachment {
@@ -160,6 +167,13 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<Mess
 export async function getMessage(id: string, includeAttachments = false, mailbox?: string): Promise<Message> {
   const params = includeAttachments ? { '$expand': 'Attachments' } : undefined;
   return getFromMailbox<Message>(`/messages/${id}`, params, mailbox);
+}
+
+/** Read the RFC-style transport headers Outlook exposes for a message. */
+export async function getMessageHeaders(id: string, mailbox?: string): Promise<Message> {
+  return getFromMailbox<Message>(`/messages/${id}`, {
+    '$select': 'Id,Subject,InternetMessageId,InternetMessageHeaders',
+  }, mailbox);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

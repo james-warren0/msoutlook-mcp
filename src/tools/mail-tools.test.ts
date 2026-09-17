@@ -5,7 +5,7 @@ import { registerMailTools } from './mail-tools.js';
 
 vi.mock('node:fs/promises', () => ({ writeFile: vi.fn() }));
 vi.mock('../api/mail.js', () => ({
-  listMessages: vi.fn(), getMessage: vi.fn(), sendEmail: vi.fn(), createDraft: vi.fn(),
+  listMessages: vi.fn(), getMessage: vi.fn(), getMessageHeaders: vi.fn(), sendEmail: vi.fn(), createDraft: vi.fn(),
   replyToMessage: vi.fn(), createReplyDraft: vi.fn(), createForwardDraft: vi.fn(),
   forwardMessage: vi.fn(), markMessageRead: vi.fn(), flagMessage: vi.fn(), moveMessage: vi.fn(),
   deleteMessage: vi.fn(), searchMessages: vi.fn(), listFolders: vi.fn(), getUnreadMessages: vi.fn(),
@@ -75,6 +75,30 @@ describe('outlook_get_email', () => {
     expect(mail.getMessage).toHaveBeenCalledWith('m1', false, undefined);
     expect(mail.markMessageRead).not.toHaveBeenCalled();
     expect(text(r)).not.toContain('- a.pdf');
+  });
+});
+
+describe('outlook_get_email_headers', () => {
+  it('formats raw headers and preserves duplicates', async () => {
+    vi.mocked(mail.getMessageHeaders).mockResolvedValue({
+      Id: 'm1',
+      Subject: 'Report',
+      InternetMessageId: '<message@example.com>',
+      InternetMessageHeaders: [
+        { Name: 'Received', Value: 'by mx1' },
+        { Name: 'Received', Value: 'by mx2' },
+        { Name: 'Authentication-Results', Value: 'spf=pass' },
+      ],
+    } as any);
+
+    const r = await tools.get('outlook_get_email_headers')!.handler({
+      id: 'm1', mailbox: 'shared@example.com',
+    });
+
+    expect(mail.getMessageHeaders).toHaveBeenCalledWith('m1', 'shared@example.com');
+    expect(text(r)).toContain('Internet Message ID: <message@example.com>');
+    expect(text(r).match(/Received:/g)).toHaveLength(2);
+    expect(text(r)).toContain('Authentication-Results: spf=pass');
   });
 });
 
