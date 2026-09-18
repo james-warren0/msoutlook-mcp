@@ -14,7 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { logger } from '../utils/logger.js';
-import { OWA_URL, LOGIN_TIMEOUT_MS } from '../constants.js';
+import { OWA_URL, LOGIN_TIMEOUT_MS, INTERACTIVE_LOGIN_TIMEOUT_MS } from '../constants.js';
 import {
   getBrowserProfileDir,
   writeSessionState,
@@ -229,7 +229,10 @@ async function waitForOwaAuth(context: BrowserContext, timeoutMs: number): Promi
     if (redirectedToLogin) return false;
 
     // No login redirect — session appears valid. Now wait for the MSAL token.
-    await page.waitForFunction(owaAccessTokenPresent, { timeout: timeoutMs });
+    // NOTE: Playwright's second positional parameter is `arg`, not `options`.
+    // Passing the options object there silently drops the timeout and falls back
+    // to Playwright's 30s default, so `undefined` must be passed explicitly.
+    await page.waitForFunction(owaAccessTokenPresent, undefined, { timeout: timeoutMs });
     return true;
   } finally {
     page.off('framenavigated', onNavigation);
@@ -366,10 +369,13 @@ export async function headedLogin(clearCookiesFirst = false): Promise<LoginResul
     const page = context.pages()[0];
 
     if (!authenticated) {
-      // Login redirect — user needs to sign in manually; wait for them
+      // Login redirect — user needs to sign in manually; wait for them.
+      // This can span several SSO steps (credentials, MFA, device approval,
+      // "stay signed in"), so it needs the full interactive timeout.
+      // NOTE: `undefined` is the `arg` parameter — see waitForOwaAuth above.
       logger.info('Waiting for you to complete sign-in in the browser...');
       if (page) {
-        await page.waitForFunction(owaAccessTokenPresent, { timeout: LOGIN_TIMEOUT_MS });
+        await page.waitForFunction(owaAccessTokenPresent, undefined, { timeout: INTERACTIVE_LOGIN_TIMEOUT_MS });
       }
     }
 

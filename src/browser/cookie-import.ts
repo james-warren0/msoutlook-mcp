@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import type { BrowserContext } from 'playwright';
 import { logger } from '../utils/logger.js';
+import { KEYCHAIN_TIMEOUT_MS } from '../constants.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -223,12 +224,22 @@ function getMacOSDecryptionKey(keychainService: string): Buffer | null {
   try {
     const password = execSync(
       `security find-generic-password -s "${keychainService}" -w`,
-      { encoding: 'utf8', timeout: 5000 },
+      { encoding: 'utf8', timeout: KEYCHAIN_TIMEOUT_MS },
     ).trim();
     const key = crypto.pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1');
     macKeyCache.set(keychainService, key);
     return key;
-  } catch {
+  } catch (err) {
+    // Surface the reason: a SIGTERM here means the GUI keychain prompt was never
+    // answered, which is actionable ("click Always Allow"), unlike a missing item.
+    const msg = err instanceof Error ? err.message : String(err);
+    const timedOut = msg.includes('ETIMEDOUT') || (err as { signal?: string })?.signal === 'SIGTERM';
+    logger.warn(
+      timedOut
+        ? `Keychain prompt for "${keychainService}" was not answered within ${KEYCHAIN_TIMEOUT_MS / 1000}s. ` +
+          'Approve the macOS prompt with "Always Allow" and retry, or SSO cookies cannot be imported.'
+        : `Could not read "${keychainService}" from the keychain: ${msg}`,
+    );
     macKeyCache.set(keychainService, null);
     return null;
   }

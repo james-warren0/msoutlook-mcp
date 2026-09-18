@@ -55,6 +55,25 @@ export const TOKEN_REFRESH_BUFFER_MS = 55 * 60 * 1000;
 /** How long to wait for user to complete browser login (ms). */
 export const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * How long to wait for a fully interactive sign-in (ms).
+ *
+ * Deliberately longer than LOGIN_TIMEOUT_MS: tenants with Conditional Access
+ * sign-in frequency policies force a multi-step flow (credentials, MFA, device
+ * approval, "stay signed in?"), which routinely outlasts a 5 minute budget.
+ */
+export const INTERACTIVE_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * How long to wait for the OS keychain to yield the browser cookie decryption
+ * key (ms).
+ *
+ * This blocks on a GUI prompt the first time a given binary asks, so it must be
+ * long enough for a human to notice the dialog and click "Always Allow". The
+ * previous 5 second budget killed the prompt before it could be answered.
+ */
+export const KEYCHAIN_TIMEOUT_MS = 90 * 1000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP
 // ─────────────────────────────────────────────────────────────────────────────
