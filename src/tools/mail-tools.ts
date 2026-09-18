@@ -45,7 +45,17 @@ const mailboxSchema = z.string().email().optional().describe(
   'Shared/delegated mailbox email address. Omit to use the signed-in user mailbox.',
 );
 
-function formatMessage(m: Message, full = false): string {
+/**
+ * Default cap on rendered body length.
+ *
+ * The previous 5000 character cap silently truncated long messages mid-sentence
+ * with no marker, so a caller could not tell a complete body from a cut one.
+ * Security reports routinely exceed it. The cap is now generous, explicit when
+ * it bites, and overridable per call.
+ */
+const DEFAULT_MAX_BODY_CHARS = 100_000;
+
+function formatMessage(m: Message, full = false, maxBodyChars = DEFAULT_MAX_BODY_CHARS): string {
   const from = m.From?.EmailAddress
     ? `${m.From.EmailAddress.Name ?? ''} <${m.From.EmailAddress.Address}>`
     : 'Unknown';
@@ -61,11 +71,19 @@ function formatMessage(m: Message, full = false): string {
     `Read: ${m.IsRead ? 'Yes' : 'No'}`,
     `Has Attachments: ${m.HasAttachments ? 'Yes' : 'No'}`,
     m.Flag?.FlagStatus !== 'NotFlagged' ? `Flag: ${m.Flag?.FlagStatus}` : '',
+    m.Categories?.length ? `Categories: ${m.Categories.join(', ')}` : '',
     m.WebLink ? `Web URL: ${m.WebLink}` : '',
   ].filter(Boolean);
 
   if (full && m.Body) {
-    lines.push('', `Body (${m.Body.ContentType}):`, m.Body.Content.slice(0, 5000));
+    const content = m.Body.Content;
+    const truncated = content.length > maxBodyChars;
+    lines.push('', `Body (${m.Body.ContentType}${truncated ? ', TRUNCATED' : ''}):`,
+      truncated ? content.slice(0, maxBodyChars) : content);
+    if (truncated) {
+      lines.push('', `[TRUNCATED: ${content.length} chars total, ${content.length - maxBodyChars} omitted. ` +
+        'Re-fetch with a larger max_body_chars to see the rest.]');
+    }
   } else if (m.BodyPreview) {
     lines.push(`Preview: ${m.BodyPreview}`);
   }
@@ -141,15 +159,19 @@ export function registerMailTools(server: McpServer): void {
       id: z.string().describe('The email message ID (from outlook_list_emails)'),
       include_attachments: z.boolean().optional().describe('Include attachment metadata (default: false)'),
       mark_read: z.boolean().optional().describe('Mark as read when fetching (default: false)'),
+      max_body_chars: z.number().int().positive().optional().describe(
+        'Maximum body characters to return (default: 100000). When the body is longer it is cut ' +
+        'and an explicit [TRUNCATED: ...] marker is appended, so a cut body is never mistaken for a complete one.',
+      ),
     },
-    async ({ mailbox, id, include_attachments, mark_read }) => {
+    async ({ mailbox, id, include_attachments, mark_read, max_body_chars }) => {
       const message = await getMessage(id, include_attachments ?? false, mailbox);
 
       if (mark_read && !message.IsRead) {
         await markMessageRead(id, true, mailbox);
       }
 
-      let text = formatMessage(message, true);
+      let text = formatMessage(message, true, max_body_chars);
 
       if (include_attachments && message.Attachments?.length) {
         text += '\n\nAttachments:\n';

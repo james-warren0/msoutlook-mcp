@@ -141,6 +141,7 @@ export async function listMessages(opts: ListMessagesOptions = {}): Promise<Mess
     '$select': (opts.select ?? [
       'Id', 'Subject', 'BodyPreview', 'From', 'ToRecipients', 'ReceivedDateTime',
       'IsRead', 'HasAttachments', 'Importance', 'Flag', 'ConversationId', 'WebLink',
+      'Categories',
     ]).join(','),
   };
 
@@ -414,7 +415,7 @@ export async function searchMessages(opts: SearchMessagesOptions): Promise<Searc
   const params: Record<string, string> = {
     '$search': `"${kql}"`,
     '$top': String(opts.top ?? 20),
-    '$select': 'Id,Subject,BodyPreview,From,ReceivedDateTime,IsRead,WebLink',
+    '$select': 'Id,Subject,BodyPreview,From,ReceivedDateTime,IsRead,WebLink,Categories',
   };
   if (opts.skipToken) params['$skiptoken'] = opts.skipToken;
 
@@ -543,7 +544,7 @@ export async function getConversation(conversationId: string, top = 50, mailbox?
   const res = await getFromMailbox<ODataResponse<Message>>('/messages', {
     '$filter': `ConversationId eq '${conversationId.replace(/'/g, "''")}'`,
     '$top': String(top),
-    '$select': 'Id,Subject,BodyPreview,From,ToRecipients,ReceivedDateTime,IsRead,HasAttachments,ConversationId,WebLink',
+    '$select': 'Id,Subject,BodyPreview,From,ToRecipients,ReceivedDateTime,IsRead,HasAttachments,ConversationId,WebLink,Categories',
   }, mailbox);
   return res.value.sort((a, b) => (a.ReceivedDateTime ?? '').localeCompare(b.ReceivedDateTime ?? ''));
 }
