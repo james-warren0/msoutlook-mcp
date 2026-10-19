@@ -71,7 +71,8 @@ function formatMessage(m: Message, full = false, maxBodyChars = DEFAULT_MAX_BODY
     `Read: ${m.IsRead ? 'Yes' : 'No'}`,
     `Has Attachments: ${m.HasAttachments ? 'Yes' : 'No'}`,
     m.Flag?.FlagStatus !== 'NotFlagged' ? `Flag: ${m.Flag?.FlagStatus}` : '',
-    m.Categories?.length ? `Categories: ${m.Categories.join(', ')}` : '',
+    // Keep an explicitly empty list distinguishable from unavailable category data.
+    `Categories: ${Array.isArray(m.Categories) ? (m.Categories.length ? m.Categories.join(', ') : '[]') : 'UNKNOWN'}`,
     m.WebLink ? `Web URL: ${m.WebLink}` : '',
   ].filter(Boolean);
 

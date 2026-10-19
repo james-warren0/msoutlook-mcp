@@ -57,9 +57,24 @@ describe('outlook_list_emails', () => {
     vi.mocked(mail.listMessages).mockResolvedValue([] as any);
     expect(text(await tools.get('outlook_list_emails')!.handler({}))).toBe('No messages found.');
   });
+  it.each([
+    { categories: ['PS- James', 'needs-triage'], expected: 'PS- James, needs-triage' },
+    { categories: [], expected: '[]' },
+    { categories: undefined, expected: 'UNKNOWN' },
+    { categories: null, expected: 'UNKNOWN' },
+  ])('renders category state as $expected', async ({ categories, expected }) => {
+    vi.mocked(mail.listMessages).mockResolvedValue([{ ...leanMsg, Categories: categories }] as any);
+    const r = await tools.get('outlook_list_emails')!.handler({});
+    expect(text(r).split('\n')).toContain(`Categories: ${expected}`);
+  });
 });
 
 describe('outlook_get_email', () => {
+  it('reports explicitly empty categories on a full read', async () => {
+    vi.mocked(mail.getMessage).mockResolvedValue({ ...richMsg, Categories: [] } as any);
+    const r = await tools.get('outlook_get_email')!.handler({ id: 'm1' });
+    expect(text(r).split('\n')).toContain('Categories: []');
+  });
   it('reads full + attachments, marks read when unread', async () => {
     vi.mocked(mail.getMessage).mockResolvedValue({ ...richMsg, IsRead: false } as any);
     vi.mocked(mail.markMessageRead).mockResolvedValue(undefined as any);
